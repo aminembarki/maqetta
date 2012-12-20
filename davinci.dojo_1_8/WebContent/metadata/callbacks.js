@@ -57,11 +57,11 @@ define(function() {
 	 * category {string} - A string unique to this SceneManager that must be used as the 'type' property on each scene
 	 * 
 	 */
-	function DojoMobileViewSceneManager(context) {
+	var DojoMobileViewSceneManager = function(context) {
 		this.context = context;
 		//FIXME: How to do nls? Maybe need to convert callback.js to AMD and leverage AMD's I18N?
 		this.name = 'Dojo Mobile Views'; //FIXME: Needs to be localized
-	}
+	};
 	
 	DojoMobileViewSceneManager.prototype = {
 		id: 'DojoMobileViews',
@@ -82,21 +82,19 @@ define(function() {
 		},
 		_reviewEditorSceneChange: function(docContext){
 			if(docContext == this.context && docContext.declaredClass == 'davinci.review.editor.Context'){
-				var dj = docContext.getDojo();
-				var _dijit = dj ? dj.dijit : null;
-				if(_dijit){
-					var views = dj.query('.mblView');
+				this.context.getGlobal['require'](['dojo/_base/connect', 'dijit/registry'], function(innerConnect, innerRegistry){
+					var views = docContext.rootNode.querySelectorAll('.mblView');
 					for(var i=0; i<views.length; i++){
 						var view = views[i];
 						if(view.id){
-							var viewDijit = _dijit.byId(view.id);
+							var viewDijit = innerRegistry.byId(view.id);
 							if(viewDijit){
 								// Listen for View and ScrollableView change (probably from touch gesture)
 								viewDijit.onAfterTransitionIn = function(sm, viewId, moveTo, dir, transition, context, method){
 									dojo.publish("/davinci/scene/selectionChanged", [sm, viewId]);
 								}.bind(this, this, view.id);
 								// Listen for SwapView changes (probably from flick gesture)
-								dj.subscribe('/dojox/mobile/viewChanged', function(newView){
+								innerConnect.subscribe('/dojox/mobile/viewChanged', this, function(newView){
 									// If this routine in in middle of forcing the view change, don't try to update anything
 									if(this._swapViewChangeHandle){
 										return;
@@ -104,21 +102,18 @@ define(function() {
 									if(newView && newView.id){
 										dojo.publish("/davinci/scene/selectionChanged", [this, newView.id]);
 									}
-								}.bind(this));
+								});
 							}
 						}
 					}
-				}
+				});
 			}
 		},
+
 		selectScene: function(params){
 			var sceneId = params.sceneId;
-			var dj = this.context.getDojo();
 			var n;
-			if(!dj){
-				return;
-			}
-			var domNode = dj.byId(sceneId);
+			var domNode = this.context.getDocument().getElementById(sceneId);
 			var sceneSelected = null;
 			if(this.context.declaredClass == 'davinci.ve.Context'){
 				if(domNode){
@@ -134,10 +129,10 @@ define(function() {
 				}
 			}else if(this.context.declaredClass == 'davinci.review.editor.Context'){
 				if(domNode){
-					var _dijit = dj.dijit;
-					var node = domNode;
-					var pnode = node.parentNode;
-					var viewsToUpdate = [];
+					var node = domNode,
+						pnode = node.parentNode,
+						viewsToUpdate = [];
+
 					// See if this View or any ancestor View is not currently visible
 					while (node.tagName != 'BODY'){
 						if(node.style.display == "none" || node.getAttribute("selected") != "true"){
@@ -145,7 +140,7 @@ define(function() {
 						}else{
 							for(var i=0;i<pnode.childNodes.length;i++){
 								n=pnode.childNodes[i];
-								if(n.nodeType==1 && dj.hasClass(n,"mblView")){	//nodeType==1 is Element
+								if(n.nodeType==1 && dojo.hasClass(n,"mblView")){	//nodeType==1 is Element
 									if(n!=node && (n.style.display != "none" || n.getAttribute("selected") == "true")){
 										viewsToUpdate.splice(0, 0, node);
 										break;
@@ -156,62 +151,64 @@ define(function() {
 						node = pnode;
 						pnode = node.parentNode;
 					}
-					for(var v=0;v<viewsToUpdate.length;v++){
-						var viewNode = viewsToUpdate[v];
-						if(viewNode && viewNode.id){
-							var newView = _dijit.byId(viewNode.id);
-							if(newView){
-								if(newView.declaredClass == 'dojox.mobile.SwapView'){
-									// For SwapView, we have to slide one-by-one from current SwapView
-									// to the newly select SwapView
-									var showingView = newView.getShowingView();
-									var showingViewIndex, newViewIndex;
-									var nodes = showingView.domNode.parentNode.childNodes;
-									var allSwapViews = true;
-									for(var j = 0; j < nodes.length; j++){
-										n = nodes[j];
-										if(n.nodeType == 1 && n.getAttribute('data-dojo-type') != 'dojox.mobile.SwapView'){
-											allSwapViews = false;
+					this.context.getGlobal()['require'](['dojo/_base/connect', 'dijit/registry'], function(innerConnect, innerRegistry){
+						for(var v=0;v<viewsToUpdate.length;v++){
+							var viewNode = viewsToUpdate[v];
+							if(viewNode && viewNode.id){
+								var newView = innerRegistry.byId(viewNode.id);
+								if(newView){
+									if(newView.declaredClass == 'dojox.mobile.SwapView'){
+										// For SwapView, we have to slide one-by-one from current SwapView
+										// to the newly select SwapView
+										var showingView = newView.getShowingView();
+										var showingViewIndex, newViewIndex;
+										var nodes = showingView.domNode.parentNode.childNodes;
+										var allSwapViews = true;
+										for(var j = 0; j < nodes.length; j++){
+											n = nodes[j];
+											if(n.nodeType == 1 && n.getAttribute('data-dojo-type') != 'dojox.mobile.SwapView'){
+												allSwapViews = false;
+											}
+											if(n.id == showingView.id){
+												showingViewIndex = j;
+											}
+											if(n.id == newView.id){
+												newViewIndex = j;
+											}
 										}
-										if(n.id == showingView.id){
-											showingViewIndex = j;
+										if(allSwapViews){
+											if(this._swapViewChangeHandle){
+												// Extra careful to make sure there is only one listener
+												innerConnect.unsubscribe(this._swapViewChangeHandle);
+												delete this._swapViewChangeHandle;
+											}
+											if(typeof showingViewIndex == 'number' && typeof newViewIndex == 'number' && showingViewIndex !== newViewIndex){
+												var dir = (newViewIndex > showingViewIndex) ? 1 : -1;
+												var cv = showingView;	// cv = current view
+												this._swapViewChangeHandle = innerConnect.subscribe("/dojox/mobile/viewChanged", this, function(v){
+													if(v && v.id && v.id != newView.id && v.id != cv.id){
+														cv = v;
+														cv.goTo(dir);
+													}else{
+														innerConnect.unsubscribe(this._swapViewChangeHandle);
+														delete this._swapViewChangeHandle;
+														dojo.publish("/davinci/scene/selectionChanged", [this, newView.id]);
+													}
+												});
+												cv.goTo(dir);
+											}
+										}else{
+											newView.show();
 										}
-										if(n.id == newView.id){
-											newViewIndex = j;
-										}
-									}
-									if(allSwapViews){
-										if(this._swapViewChangeHandle){
-											// Extra careful to make sure there is only one listener
-											dj.unsubscribe(this._swapViewChangeHandle);
-											this._swapViewChangeHandle = null;
-										}
-										if(typeof showingViewIndex == 'number' && typeof newViewIndex == 'number' && showingViewIndex !== newViewIndex){
-											var dir = (newViewIndex > showingViewIndex) ? 1 : -1;
-											var cv = showingView;	// cv = current view
-											this._swapViewChangeHandle = dj.subscribe("/dojox/mobile/viewChanged",function(v){
-												if(v && v.id && v.id != newView.id && v.id != cv.id){
-													cv = v;
-													cv.goTo(dir);
-												}else{
-													dj.unsubscribe(this._swapViewChangeHandle);
-													this._swapViewChangeHandle = null;
-													dojo.publish("/davinci/scene/selectionChanged", [this, newView.id]);
-												}
-											}.bind(this));
-											cv.goTo(dir);
-										}
-									}else{
+									}else if(newView.show){
+										// for View and ScrollableView, call show()
 										newView.show();
 									}
-								}else if(newView.show){
-									// for View and ScrollableView, call show()
-									newView.show();
 								}
 							}
 						}
-					}
-					sceneSelected = (viewsToUpdate.length>0) ? sceneId : null;
+					});
+					sceneSelected = viewsToUpdate.length ? sceneId : null;
 				}
 			}
 			if(sceneSelected){
@@ -219,13 +216,14 @@ define(function() {
 			}
 			return sceneSelected;
 		},
+
 		getCurrentScene: function(sceneContainerNode){
 			if(!sceneContainerNode){
 				return;
 			}
 			var currentScene, viewDijit;
 			var userDoc = this.context.getDocument();
-			var _dijit = (userDoc && userDoc.defaultView && userDoc.defaultView.dijit);
+			var _dijit = userDoc && userDoc.defaultView && userDoc.defaultView.dijit;
 			var elems = sceneContainerNode.querySelectorAll('.mblView');
 			for(var i=0; i<elems.length; i++){
 				var elem = elems[i];
@@ -234,7 +232,7 @@ define(function() {
 				}
 				viewDijit = null;
 				if(this.context.declaredClass == 'davinci.ve.Context'){
-					viewDijit = (elem._dvWidget && elem._dvWidget.dijitWidget);
+					viewDijit = elem._dvWidget && elem._dvWidget.dijitWidget;
 				}else if(this.context.declaredClass == 'davinci.review.editor.Context'){
 					viewDijit = (_dijit && _dijit.byId && elem.id) ? _dijit.byId(elem.id) : null;
 				}
@@ -255,7 +253,7 @@ define(function() {
 			}
 			var currentScene, viewDijit;
 			var userDoc = this.context.getDocument();
-			var _dijit = (userDoc && userDoc.defaultView && userDoc.defaultView.dijit);
+			var _dijit = userDoc && userDoc.defaultView && userDoc.defaultView.dijit;
 			var elems = sceneContainerNode.querySelectorAll('.mblView');
 			for(var i=0; i<elems.length; i++){
 				var elem = elems[i];
@@ -264,7 +262,7 @@ define(function() {
 				}
 				viewDijit = null;
 				if(this.context.declaredClass == 'davinci.ve.Context'){
-					viewDijit = (elem._dvWidget && elem._dvWidget.dijitWidget);
+					viewDijit = elem._dvWidget && elem._dvWidget.dijitWidget;
 				}else if(this.context.declaredClass == 'davinci.review.editor.Context'){
 					viewDijit = (_dijit && _dijit.byId && elem.id) ? _dijit.byId(elem.id) : null;
 				}
@@ -279,12 +277,7 @@ define(function() {
 			if(!this.context || !this.context.rootNode){
 				return allSceneContainers;
 			}
-			var dj = this.context.getDojo();
-			if(!dj){
-				return allSceneContainers;
-			}
-			var rootNode = this.context.rootNode;
-			var allViews = dj.query('.mblView', rootNode);
+			var allViews = this.context.rootNode.querySelectorAll('.mblView');
 			for(var i=0; i<allViews.length; i++){
 				var view = allViews[i];
 				var pn = view.parentNode;
@@ -298,34 +291,17 @@ define(function() {
 			if(!this.context || !node){
 				return false;
 			}
-			var dj = this.context.getDojo();
-			if(!dj){
-				return false;
-			}
-			for(var i=0; i<node.childNodes.length; i++){
-				var child = node.childNodes[i];
-				if(child.nodeType==1 && dj.hasClass(child, 'mblView')){	// nodeType==1 => Element
-					return true;
-				}
-			}
-			return false;
+			return dojo.some(node.childNodes, function(child) {
+				return child.nodeType==1 && dojo.hasClass(child, 'mblView');
+			});
 		},
 		getSceneChildren: function(node){
 			if(!this.context || !node){
 				return [];
 			}
-			var dj = this.context.getDojo();
-			if(!dj){
-				return [];
-			}
-			var scenes = [];
-			for(var i=0; i<node.childNodes.length; i++){
-				var child = node.childNodes[i];
-				if(child.nodeType==1 && dj.hasClass(child, 'mblView')){	// nodeType==1 => Element
-					scenes.push(child);
-				}
-			}
-			return scenes;
+			return dojo.filter(node.childNodes, function(child) {
+				return child.nodeType==1 && dojo.hasClass(child, 'mblView');
+			});
 		},
 		getSceneContainerForNode: function(node){
 			if(!this.context || !node){
